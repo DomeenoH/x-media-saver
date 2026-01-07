@@ -14,6 +14,10 @@
 // @description:zh-TW   從 X.com 下載影片、圖片和GIF。支援複製到剪貼簿。GIF儲存為真正的.gif格式。
 // @description:ja      X.comから動画、画像、GIFをダウンロード。クリップボードへのコピー対応。GIFは本物の.gif形式で保存。
 // @description:ko      X.com에서 비디오, 이미지, GIF 다운로드. 클립보드 복사 지원. GIF는 실제 .gif 형식으로 저장.
+// @description:es      Descarga videos, imágenes y GIFs de X.com. Copia al portapapeles. Los GIFs se guardan en formato .gif real.
+// @description:fr      Téléchargez des vidéos, images et GIFs depuis X.com. Copie dans le presse-papiers. Les GIFs sont enregistrés au format .gif réel.
+// @description:de      Videos, Bilder und GIFs von X.com herunterladen. In Zwischenablage kopieren. GIFs werden im echten .gif-Format gespeichert.
+// @description:ru      Скачивайте видео, изображения и GIF с X.com. Копирование в буфер обмена. GIF сохраняются в реальном формате .gif.
 
 // @namespace    https://github.com/DomeenoH/x-media-saver
 // @version      1.0.0
