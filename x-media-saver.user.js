@@ -21,7 +21,7 @@
 // @license      MIT
 // @homepageURL  https://github.com/DomeenoH/x-media-saver
 // @supportURL   https://github.com/DomeenoH/x-media-saver/issues
-// @icon         https://abs.twimg.com/favicons/twitter.ico
+// @icon         https://x.com/favicon.ico
 
 // @match        https://x.com/*
 // @match        https://twitter.com/*
