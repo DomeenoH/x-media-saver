@@ -1,0 +1,79 @@
+# X Media Saver
+
+Download videos, images and GIFs from X.com (Twitter) with one click.
+
+[English](#features) | [中文](#功能特点)
+
+## Features
+
+- **Download Images** - Original quality
+- **Download Videos** - MP4 format
+- **Download GIFs** - Real `.gif` format (not MP4!)
+- **Copy to Clipboard** - Images as PNG, GIFs via popup
+- **Native UI** - Buttons blend into X.com's action bar
+- **Smart Naming** - `{username}_{date}_{mediaId}.{ext}`
+
+## Installation
+
+1. Install [Tampermonkey](https://www.tampermonkey.net/) browser extension
+2. Click [Install Script](https://github.com/DomeenoH/x-media-saver/raw/main/x-media-saver.user.js)
+3. Confirm installation in Tampermonkey
+
+## Usage
+
+After installation, you'll see two new buttons in the action bar of each tweet with media:
+
+| Button | Function |
+|--------|----------|
+| ⬇️ | Download media |
+| 📋 | Copy to clipboard |
+
+For GIFs, clicking copy will open a popup - right-click the image to copy.
+
+## Why This Script?
+
+| Feature | Other Scripts | X Media Saver |
+|---------|---------------|---------------|
+| GIF Format | ❌ MP4 | ✅ Real .gif |
+| Clipboard Copy | ❌ | ✅ |
+| UI Integration | ⚠️ Floating | ✅ Native |
+
+## License
+
+MIT
+
+---
+
+# X 媒体保存器
+
+一键从 X.com (Twitter) 下载视频、图片和GIF。
+
+## 功能特点
+
+- **下载图片** - 原图质量
+- **下载视频** - MP4格式
+- **下载GIF** - 真正的 `.gif` 格式（不是MP4！）
+- **复制到剪贴板** - 图片为PNG，GIF通过弹窗
+- **原生UI** - 按钮融入X.com操作栏
+- **智能命名** - `{用户名}_{日期}_{媒体ID}.{扩展名}`
+
+## 安装
+
+1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 浏览器扩展
+2. 点击 [安装脚本](https://github.com/DomeenoH/x-media-saver/raw/main/x-media-saver.user.js)
+3. 在Tampermonkey中确认安装
+
+## 使用方法
+
+安装后，每条包含媒体的推文操作栏会多出两个按钮：
+
+| 按钮 | 功能 |
+|------|------|
+| ⬇️ | 下载媒体 |
+| 📋 | 复制到剪贴板 |
+
+GIF点击复制会打开弹窗，右键图片即可复制。
+
+## 许可证
+
+MIT
