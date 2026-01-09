@@ -20,7 +20,7 @@
 // @description:ru      Скачивайте видео, изображения и GIF с X.com. Копирование в буфер обмена. GIF сохраняются в реальном формате .gif.
 
 // @namespace    https://github.com/DomeenoH/x-media-saver
-// @version      1.0.0
+// @version      1.1.0
 // @author       DomeenoH
 // @license      MIT
 // @homepageURL  https://github.com/DomeenoH/x-media-saver
@@ -118,6 +118,62 @@
             color: white;
             font-size: 32px;
             cursor: pointer;
+        }
+        .xmd-picker {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            max-width: 600px;
+            padding: 20px;
+        }
+        .xmd-picker-item {
+            position: relative;
+            cursor: pointer;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .xmd-picker-item img {
+            width: 100%;
+            aspect-ratio: 1;
+            object-fit: cover;
+            display: block;
+        }
+        .xmd-picker-item.selected::after {
+            content: '✓';
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: rgb(29, 155, 240);
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+        .xmd-picker-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+        }
+        .xmd-picker-btn {
+            padding: 10px 24px;
+            border-radius: 9999px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .xmd-picker-btn.primary {
+            background: rgb(29, 155, 240);
+            color: white;
+        }
+        .xmd-picker-btn.secondary {
+            background: transparent;
+            color: white;
+            border: 1px solid rgb(83, 100, 113);
         }
     `);
 
@@ -292,34 +348,119 @@
         if (videoEl) {
             const src = videoEl.src || videoEl.querySelector('source')?.src || '';
             if (src.includes('tweet_video')) {
-                return { type: 'gif', url: src };
+                return { type: 'gif', url: src, urls: [src] };
             }
-            return { type: 'video', url: src };
+            return { type: 'video', url: src, urls: [src] };
         }
 
-        const imgEl = article.querySelector('img[src*="pbs.twimg.com/media"]');
-        if (imgEl) {
-            let url = imgEl.src;
-            url = url.replace(/&name=\w+/, '&name=orig').replace(/\?format=/, '?format=');
-            if (!url.includes('name=')) url += '&name=orig';
-            return { type: 'image', url: url };
+        const imgEls = article.querySelectorAll('img[src*="pbs.twimg.com/media"]');
+        if (imgEls.length > 0) {
+            const urls = [...imgEls].map(img => {
+                let url = img.src;
+                url = url.replace(/&name=\w+/, '&name=orig').replace(/\?format=/, '?format=');
+                if (!url.includes('name=')) url += '&name=orig';
+                return url;
+            });
+            return { type: 'image', url: urls[0], urls: urls };
         }
 
         return null;
     }
 
+    function showImagePicker(article, media, onDownload) {
+        const modal = document.createElement('div');
+        modal.className = 'xmd-modal';
+
+        const closeBtn = document.createElement('span');
+        closeBtn.className = 'xmd-modal-close';
+        closeBtn.innerHTML = '&times;';
+        closeBtn.onclick = () => modal.remove();
+
+        const picker = document.createElement('div');
+        picker.className = 'xmd-picker';
+
+        const selected = new Set(media.urls.map((_, i) => i));
+
+        media.urls.forEach((url, i) => {
+            const item = document.createElement('div');
+            item.className = 'xmd-picker-item selected';
+            item.innerHTML = `<img src="${url.replace('name=orig', 'name=small')}">`;
+            item.onclick = () => {
+                if (selected.has(i)) {
+                    selected.delete(i);
+                    item.classList.remove('selected');
+                } else {
+                    selected.add(i);
+                    item.classList.add('selected');
+                }
+            };
+            picker.appendChild(item);
+        });
+
+        const actions = document.createElement('div');
+        actions.className = 'xmd-picker-actions';
+
+        const downloadBtn = document.createElement('button');
+        downloadBtn.className = 'xmd-picker-btn primary';
+        downloadBtn.textContent = '下载选中';
+        downloadBtn.onclick = async () => {
+            const urls = media.urls.filter((_, i) => selected.has(i));
+            modal.remove();
+            await onDownload(urls);
+        };
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'xmd-picker-btn secondary';
+        cancelBtn.textContent = '取消';
+        cancelBtn.onclick = () => modal.remove();
+
+        actions.appendChild(downloadBtn);
+        actions.appendChild(cancelBtn);
+
+        modal.appendChild(closeBtn);
+        modal.appendChild(picker);
+        modal.appendChild(actions);
+
+        modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+        document.addEventListener('keydown', function esc(e) {
+            if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', esc); }
+        });
+
+        document.body.appendChild(modal);
+    }
+
     function createButtons(article, media) {
         if (article.querySelector('.xmd-action-btn')) return;
 
+        const isMultiImage = media.type === 'image' && media.urls.length > 1;
+
         const downloadBtn = document.createElement('button');
         downloadBtn.className = 'xmd-action-btn';
-        downloadBtn.title = '下载';
+        downloadBtn.title = isMultiImage ? '下载全部' : '下载';
         downloadBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 2a1 1 0 0 1 1 1v10.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V3a1 1 0 0 1 1-1zM5 20a1 1 0 1 1 0 2h14a1 1 0 1 1 0-2H5z"/></svg>';
 
         const copyBtn = document.createElement('button');
         copyBtn.className = 'xmd-action-btn';
         copyBtn.title = '复制';
         copyBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
+
+        const selectBtn = isMultiImage ? document.createElement('button') : null;
+        if (selectBtn) {
+            selectBtn.className = 'xmd-action-btn';
+            selectBtn.title = '选择下载';
+            selectBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M3 5h2V3H3v2zm4 0h14V3H7v2zm-4 6h2V9H3v2zm4 0h14V9H7v2zm-4 6h2v-2H3v2zm4 0h14v-2H7v2z"/></svg>';
+        }
+
+        const downloadImages = async (urls) => {
+            for (let i = 0; i < urls.length; i++) {
+                const url = urls[i];
+                const blob = await fetchBlob(url);
+                const ext = url.includes('format=png') ? 'png' : 'jpg';
+                const mediaId = getMediaIdFromUrl(url);
+                const suffix = urls.length > 1 ? `_${i + 1}` : '';
+                downloadBlob(blob, buildFilename(article, mediaId + suffix, ext));
+            }
+        };
 
         const mediaId = getMediaIdFromUrl(media.url);
 
@@ -339,9 +480,7 @@
                     const blob = await fetchBlob(media.url);
                     downloadBlob(blob, buildFilename(article, mediaId, 'mp4'));
                 } else {
-                    const blob = await fetchBlob(media.url);
-                    const ext = media.url.includes('format=png') ? 'png' : 'jpg';
-                    downloadBlob(blob, buildFilename(article, mediaId, ext));
+                    await downloadImages(media.urls);
                 }
             } catch (err) {
                 showToast('下载失败: ' + err.message);
@@ -350,6 +489,14 @@
             downloadBtn.disabled = false;
             downloadBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 2a1 1 0 0 1 1 1v10.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V3a1 1 0 0 1 1-1zM5 20a1 1 0 1 1 0 2h14a1 1 0 1 1 0-2H5z"/></svg>';
         };
+
+        if (selectBtn) {
+            selectBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                showImagePicker(article, media, downloadImages);
+            };
+        }
 
         copyBtn.onclick = async (e) => {
             e.preventDefault();
@@ -381,6 +528,9 @@
         const actionBar = article.querySelector('[role="group"]');
         if (actionBar) {
             actionBar.appendChild(downloadBtn);
+            if (selectBtn) {
+                actionBar.appendChild(selectBtn);
+            }
             if (media.type !== 'video') {
                 actionBar.appendChild(copyBtn);
             }
