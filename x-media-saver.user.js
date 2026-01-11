@@ -20,7 +20,7 @@
 // @description:ru      Скачивайте видео, изображения и GIF с X.com. Копирование в буфер обмена. GIF сохраняются в реальном формате .gif.
 
 // @namespace    https://github.com/DomeenoH/x-media-saver
-// @version      1.1.0
+// @version      1.2.0
 // @author       DomeenoH
 // @license      MIT
 // @homepageURL  https://github.com/DomeenoH/x-media-saver
@@ -380,7 +380,9 @@
             if (src.includes('tweet_video')) {
                 return { type: 'gif', url: src, urls: [src] };
             }
-            return { type: 'video', url: src, urls: [src] };
+            // 获取视频时长，用于判断是否可转GIF
+            const duration = videoEl.duration || 0;
+            return { type: 'video', url: src, urls: [src], duration };
         }
 
         const imgEls = article.querySelectorAll('img[src*="pbs.twimg.com/media"]');
@@ -490,6 +492,7 @@
         if (article.querySelector('.xmd-action-btn')) return;
 
         const isMultiImage = media.type === 'image' && media.urls.length > 1;
+        const isShortVideo = media.type === 'video' && media.duration > 0 && media.duration <= 15;
 
         const downloadBtn = document.createElement('button');
         downloadBtn.className = 'xmd-action-btn';
@@ -506,6 +509,14 @@
             selectBtn.className = 'xmd-action-btn';
             selectBtn.title = '选择下载';
             selectBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M3 5h2V3H3v2zm4 0h14V3H7v2zm-4 6h2V9H3v2zm4 0h14V9H7v2zm-4 6h2v-2H3v2zm4 0h14v-2H7v2z"/></svg>';
+        }
+
+        // 短视频保存为GIF按钮
+        const saveAsGifBtn = isShortVideo ? document.createElement('button') : null;
+        if (saveAsGifBtn) {
+            saveAsGifBtn.className = 'xmd-action-btn';
+            saveAsGifBtn.title = '保存为GIF';
+            saveAsGifBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M11.5 9H13v6h-1.5zM9 9H6c-.6 0-1 .5-1 1v4c0 .5.4 1 1 1h3c.6 0 1-.5 1-1v-2H8.5v1.5h-2v-3H10V10c0-.5-.4-1-1-1zm10 1.5V9h-4.5v6H16v-2h2v-1.5h-2v-1z"/></svg>';
         }
 
         const downloadImages = async (urls) => {
@@ -555,6 +566,28 @@
             };
         }
 
+        // 短视频保存为GIF
+        if (saveAsGifBtn) {
+            saveAsGifBtn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                saveAsGifBtn.disabled = true;
+                saveAsGifBtn.innerHTML = '⏳';
+
+                try {
+                    const gifBlob = await convertMp4ToGif(media.url, (p) => {
+                        saveAsGifBtn.innerHTML = `${p}%`;
+                    });
+                    downloadBlob(gifBlob, buildFilename(article, mediaId, 'gif'));
+                } catch (err) {
+                    showToast('转换失败: ' + err.message);
+                }
+
+                saveAsGifBtn.disabled = false;
+                saveAsGifBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M11.5 9H13v6h-1.5zM9 9H6c-.6 0-1 .5-1 1v4c0 .5.4 1 1 1h3c.6 0 1-.5 1-1v-2H8.5v1.5h-2v-3H10V10c0-.5-.4-1-1-1zm10 1.5V9h-4.5v6H16v-2h2v-1.5h-2v-1z"/></svg>';
+            };
+        }
+
         copyBtn.onclick = async (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -567,12 +600,19 @@
                         copyBtn.innerHTML = `${p}%`;
                     });
                     showGifModal(gifBlob);
+                } else if (media.type === 'video' && isShortVideo) {
+                    // 短视频：转为GIF后浮窗复制
+                    copyBtn.innerHTML = '⏳';
+                    const gifBlob = await convertMp4ToGif(media.url, (p) => {
+                        copyBtn.innerHTML = `${p}%`;
+                    });
+                    showGifModal(gifBlob);
                 } else if (media.type === 'image') {
                     const blob = await fetchBlob(media.url);
                     const pngBlob = await convertToPng(blob);
                     await copyImageToClipboard(pngBlob);
                 } else {
-                    showToast('视频不支持复制到剪贴板');
+                    showToast('视频过长，不支持复制');
                 }
             } catch (err) {
                 showToast('复制失败: ' + err.message);
@@ -585,10 +625,14 @@
         const actionBar = article.querySelector('[role="group"]');
         if (actionBar) {
             actionBar.appendChild(downloadBtn);
+            if (saveAsGifBtn) {
+                actionBar.appendChild(saveAsGifBtn);
+            }
             if (selectBtn) {
                 actionBar.appendChild(selectBtn);
             }
-            if (media.type !== 'video') {
+            // 显示复制按钮：GIF、图片、短视频
+            if (media.type === 'gif' || media.type === 'image' || isShortVideo) {
                 actionBar.appendChild(copyBtn);
             }
         }
