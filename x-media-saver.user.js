@@ -20,7 +20,7 @@
 // @description:ru      Скачивайте видео, изображения и GIF с X.com. Копирование в буфер обмена. GIF сохраняются в реальном формате .gif.
 
 // @namespace    https://github.com/DomeenoH/x-media-saver
-// @version      1.3.0
+// @version      1.3.1
 // @author       DomeenoH
 // @license      MIT
 // @homepageURL  https://github.com/DomeenoH/x-media-saver
@@ -760,91 +760,90 @@
                         });
                         showGifModal(gifBlob);
                     }
+                } else if (media.type === 'image') {
+                    const blob = await fetchBlob(media.url);
+                    const pngBlob = await convertToPng(blob);
+                    await copyImageToClipboard(pngBlob);
                 }
-            } else if (media.type === 'image') {
-                const blob = await fetchBlob(media.url);
-                const pngBlob = await convertToPng(blob);
-                await copyImageToClipboard(pngBlob);
+            } catch (err) {
+                showToast('复制失败: ' + err.message);
             }
-        } catch (err) {
-            showToast('复制失败: ' + err.message);
-        }
 
-        copyBtn.disabled = false;
-        copyBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
-    };
+            copyBtn.disabled = false;
+            copyBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
+        };
 
-    const actionBar = article.querySelector('[role="group"]');
-    if (actionBar) {
-        actionBar.appendChild(downloadBtn);
-        if (saveAsGifBtn) {
-            actionBar.appendChild(saveAsGifBtn);
-        }
-        if (selectBtn) {
-            actionBar.appendChild(selectBtn);
-        }
-        // 显示复制按钮：GIF、图片、视频（视频时长在点击时检查）
-        if (media.type === 'gif' || media.type === 'image' || media.type === 'video') {
-            actionBar.appendChild(copyBtn);
+        const actionBar = article.querySelector('[role="group"]');
+        if (actionBar) {
+            actionBar.appendChild(downloadBtn);
+            if (saveAsGifBtn) {
+                actionBar.appendChild(saveAsGifBtn);
+            }
+            if (selectBtn) {
+                actionBar.appendChild(selectBtn);
+            }
+            // 显示复制按钮：GIF、图片、视频（视频时长在点击时检查）
+            if (media.type === 'gif' || media.type === 'image' || media.type === 'video') {
+                actionBar.appendChild(copyBtn);
+            }
         }
     }
-}
 
     async function convertToPng(blob) {
-    const img = new Image();
-    img.src = URL.createObjectURL(blob);
-    await new Promise(r => img.onload = r);
+        const img = new Image();
+        img.src = URL.createObjectURL(blob);
+        await new Promise(r => img.onload = r);
 
-    const canvas = document.createElement('canvas');
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
 
-    URL.revokeObjectURL(img.src);
+        URL.revokeObjectURL(img.src);
 
-    return new Promise(r => canvas.toBlob(r, 'image/png'));
-}
+        return new Promise(r => canvas.toBlob(r, 'image/png'));
+    }
 
-async function extractFirstFrameAsPng(videoUrl) {
-    const video = document.createElement('video');
-    video.crossOrigin = 'anonymous';
-    video.muted = true;
+    async function extractFirstFrameAsPng(videoUrl) {
+        const video = document.createElement('video');
+        video.crossOrigin = 'anonymous';
+        video.muted = true;
 
-    const blob = await fetchBlob(videoUrl);
-    video.src = URL.createObjectURL(blob);
+        const blob = await fetchBlob(videoUrl);
+        video.src = URL.createObjectURL(blob);
 
-    await new Promise(r => video.onloadedmetadata = r);
-    video.currentTime = 0;
-    await new Promise(r => video.onseeked = r);
+        await new Promise(r => video.onloadedmetadata = r);
+        video.currentTime = 0;
+        await new Promise(r => video.onseeked = r);
 
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0);
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
 
-    URL.revokeObjectURL(video.src);
+        URL.revokeObjectURL(video.src);
 
-    return new Promise(r => canvas.toBlob(r, 'image/png'));
-}
+        return new Promise(r => canvas.toBlob(r, 'image/png'));
+    }
 
-function scanAndAddButtons() {
-    const articles = document.querySelectorAll('article');
-    articles.forEach(article => {
-        const media = detectMediaType(article);
-        if (media) {
-            createButtons(article, media);
-        }
+    function scanAndAddButtons() {
+        const articles = document.querySelectorAll('article');
+        articles.forEach(article => {
+            const media = detectMediaType(article);
+            if (media) {
+                createButtons(article, media);
+            }
+        });
+    }
+
+    const observer = new MutationObserver(() => {
+        scanAndAddButtons();
     });
-}
 
-const observer = new MutationObserver(() => {
+    observer.observe(document.body, { childList: true, subtree: true });
     scanAndAddButtons();
-});
 
-observer.observe(document.body, { childList: true, subtree: true });
-scanAndAddButtons();
-
-}) ();
+})();
 
