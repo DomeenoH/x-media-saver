@@ -20,7 +20,7 @@
 // @description:ru      Скачивайте видео, изображения и GIF с X.com. Копирование в буфер обмена. GIF сохраняются в реальном формате .gif.
 
 // @namespace    https://github.com/DomeenoH/x-media-saver
-// @version      1.2.1
+// @version      1.2.2
 // @author       DomeenoH
 // @license      MIT
 // @homepageURL  https://github.com/DomeenoH/x-media-saver
@@ -523,7 +523,7 @@
         const saveAsGifBtn = isVideo ? document.createElement('button') : null;
         if (saveAsGifBtn) {
             saveAsGifBtn.className = 'xmd-action-btn';
-            saveAsGifBtn.title = '保存为GIF (≤15秒)';
+            saveAsGifBtn.title = '保存为GIF (≤20秒)';
             saveAsGifBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M11.5 9H13v6h-1.5zM9 9H6c-.6 0-1 .5-1 1v4c0 .5.4 1 1 1h3c.6 0 1-.5 1-1v-2H8.5v1.5h-2v-3H10V10c0-.5-.4-1-1-1zm10 1.5V9h-4.5v6H16v-2h2v-1.5h-2v-1z"/></svg>';
         }
 
@@ -581,8 +581,8 @@
                 e.stopPropagation();
 
                 const duration = getVideoDuration();
-                if (duration > 15) {
-                    showToast(`视频时长 ${Math.round(duration)}秒，超过15秒限制`);
+                if (duration > 20) {
+                    showToast(`视频时长 ${Math.round(duration)}秒，超过20秒限制`);
                     return;
                 }
                 if (duration === 0) {
@@ -622,8 +622,8 @@
                 } else if (media.type === 'video') {
                     // 视频：检查时长后转为GIF浮窗复制
                     const duration = getVideoDuration();
-                    if (duration > 15) {
-                        showToast(`视频时长 ${Math.round(duration)}秒，超过15秒限制`);
+                    if (duration > 20) {
+                        showToast(`视频时长 ${Math.round(duration)}秒，超过20秒限制`);
                     } else if (duration === 0) {
                         showToast('视频未加载完成，请稍后再试');
                     } else {
