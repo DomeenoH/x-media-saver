@@ -20,7 +20,7 @@
 // @description:ru      Скачивайте видео, изображения и GIF с X.com. Копирование в буфер обмена. GIF сохраняются в реальном формате .gif.
 
 // @namespace    https://github.com/DomeenoH/x-media-saver
-// @version      1.2.0
+// @version      1.2.1
 // @author       DomeenoH
 // @license      MIT
 // @homepageURL  https://github.com/DomeenoH/x-media-saver
@@ -377,12 +377,12 @@
         const videoEl = article.querySelector('video');
         if (videoEl) {
             const src = videoEl.src || videoEl.querySelector('source')?.src || '';
+            if (!src) return null; // 无效视频源
             if (src.includes('tweet_video')) {
-                return { type: 'gif', url: src, urls: [src] };
+                return { type: 'gif', url: src, urls: [src], videoEl };
             }
-            // 获取视频时长，用于判断是否可转GIF
-            const duration = videoEl.duration || 0;
-            return { type: 'video', url: src, urls: [src], duration };
+            // 保存视频元素引用，用于延迟获取时长
+            return { type: 'video', url: src, urls: [src], videoEl };
         }
 
         const imgEls = article.querySelectorAll('img[src*="pbs.twimg.com/media"]');
@@ -492,7 +492,15 @@
         if (article.querySelector('.xmd-action-btn')) return;
 
         const isMultiImage = media.type === 'image' && media.urls.length > 1;
-        const isShortVideo = media.type === 'video' && media.duration > 0 && media.duration <= 15;
+        const isVideo = media.type === 'video';
+
+        // 获取视频时长的辅助函数（延迟判断）
+        const getVideoDuration = () => {
+            if (media.videoEl && !isNaN(media.videoEl.duration)) {
+                return media.videoEl.duration;
+            }
+            return 0;
+        };
 
         const downloadBtn = document.createElement('button');
         downloadBtn.className = 'xmd-action-btn';
@@ -511,11 +519,11 @@
             selectBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M3 5h2V3H3v2zm4 0h14V3H7v2zm-4 6h2V9H3v2zm4 0h14V9H7v2zm-4 6h2v-2H3v2zm4 0h14v-2H7v2z"/></svg>';
         }
 
-        // 短视频保存为GIF按钮
-        const saveAsGifBtn = isShortVideo ? document.createElement('button') : null;
+        // 所有视频都显示保存为GIF按钮，点击时检查时长
+        const saveAsGifBtn = isVideo ? document.createElement('button') : null;
         if (saveAsGifBtn) {
             saveAsGifBtn.className = 'xmd-action-btn';
-            saveAsGifBtn.title = '保存为GIF';
+            saveAsGifBtn.title = '保存为GIF (≤15秒)';
             saveAsGifBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M11.5 9H13v6h-1.5zM9 9H6c-.6 0-1 .5-1 1v4c0 .5.4 1 1 1h3c.6 0 1-.5 1-1v-2H8.5v1.5h-2v-3H10V10c0-.5-.4-1-1-1zm10 1.5V9h-4.5v6H16v-2h2v-1.5h-2v-1z"/></svg>';
         }
 
@@ -566,11 +574,22 @@
             };
         }
 
-        // 短视频保存为GIF
+        // 视频保存为GIF（点击时检查时长）
         if (saveAsGifBtn) {
             saveAsGifBtn.onclick = async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
+
+                const duration = getVideoDuration();
+                if (duration > 15) {
+                    showToast(`视频时长 ${Math.round(duration)}秒，超过15秒限制`);
+                    return;
+                }
+                if (duration === 0) {
+                    showToast('视频未加载完成，请稍后再试');
+                    return;
+                }
+
                 saveAsGifBtn.disabled = true;
                 saveAsGifBtn.innerHTML = '⏳';
 
@@ -600,19 +619,24 @@
                         copyBtn.innerHTML = `${p}%`;
                     });
                     showGifModal(gifBlob);
-                } else if (media.type === 'video' && isShortVideo) {
-                    // 短视频：转为GIF后浮窗复制
-                    copyBtn.innerHTML = '⏳';
-                    const gifBlob = await convertMp4ToGif(media.url, (p) => {
-                        copyBtn.innerHTML = `${p}%`;
-                    });
-                    showGifModal(gifBlob);
+                } else if (media.type === 'video') {
+                    // 视频：检查时长后转为GIF浮窗复制
+                    const duration = getVideoDuration();
+                    if (duration > 15) {
+                        showToast(`视频时长 ${Math.round(duration)}秒，超过15秒限制`);
+                    } else if (duration === 0) {
+                        showToast('视频未加载完成，请稍后再试');
+                    } else {
+                        copyBtn.innerHTML = '⏳';
+                        const gifBlob = await convertMp4ToGif(media.url, (p) => {
+                            copyBtn.innerHTML = `${p}%`;
+                        });
+                        showGifModal(gifBlob);
+                    }
                 } else if (media.type === 'image') {
                     const blob = await fetchBlob(media.url);
                     const pngBlob = await convertToPng(blob);
                     await copyImageToClipboard(pngBlob);
-                } else {
-                    showToast('视频过长，不支持复制');
                 }
             } catch (err) {
                 showToast('复制失败: ' + err.message);
@@ -631,8 +655,8 @@
             if (selectBtn) {
                 actionBar.appendChild(selectBtn);
             }
-            // 显示复制按钮：GIF、图片、短视频
-            if (media.type === 'gif' || media.type === 'image' || isShortVideo) {
+            // 显示复制按钮：GIF、图片、视频（视频时长在点击时检查）
+            if (media.type === 'gif' || media.type === 'image' || media.type === 'video') {
                 actionBar.appendChild(copyBtn);
             }
         }
