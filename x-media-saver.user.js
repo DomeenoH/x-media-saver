@@ -41,7 +41,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
 
     const workerScript = GM_getResourceText('GIFWORKER');
@@ -174,6 +174,36 @@
             background: transparent;
             color: white;
             border: 1px solid rgb(83, 100, 113);
+        }
+        .xmd-picker-copy-btn {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: none;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 0.2s, transform 0.1s;
+            z-index: 1;
+        }
+        .xmd-picker-copy-btn:hover {
+            background: rgba(29, 155, 240, 0.9);
+            transform: scale(1.1);
+        }
+        .xmd-picker-copy-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .xmd-picker-copy-btn svg {
+            width: 16px;
+            height: 16px;
+            fill: currentColor;
         }
     `);
 
@@ -355,12 +385,12 @@
 
         const imgEls = article.querySelectorAll('img[src*="pbs.twimg.com/media"]');
         if (imgEls.length > 0) {
-            const urls = [...imgEls].map(img => {
+            const urls = [...new Set([...imgEls].map(img => {
                 let url = img.src;
                 url = url.replace(/&name=\w+/, '&name=orig').replace(/\?format=/, '?format=');
                 if (!url.includes('name=')) url += '&name=orig';
                 return url;
-            });
+            }))];
             return { type: 'image', url: urls[0], urls: urls };
         }
 
@@ -384,8 +414,35 @@
         media.urls.forEach((url, i) => {
             const item = document.createElement('div');
             item.className = 'xmd-picker-item selected';
-            item.innerHTML = `<img src="${url.replace('name=orig', 'name=small')}">`;
-            item.onclick = () => {
+
+            const img = document.createElement('img');
+            img.src = url.replace('name=orig', 'name=small');
+
+            const copyItemBtn = document.createElement('button');
+            copyItemBtn.className = 'xmd-picker-copy-btn';
+            copyItemBtn.title = '复制此图片';
+            copyItemBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
+            copyItemBtn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                copyItemBtn.disabled = true;
+                copyItemBtn.innerHTML = '⏳';
+                try {
+                    const blob = await fetchBlob(url);
+                    const pngBlob = await convertToPng(blob);
+                    await copyImageToClipboard(pngBlob);
+                } catch (err) {
+                    showToast('复制失败: ' + err.message);
+                }
+                copyItemBtn.disabled = false;
+                copyItemBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
+            };
+
+            item.appendChild(copyItemBtn);
+            item.appendChild(img);
+
+            item.onclick = (e) => {
+                if (e.target === copyItemBtn || copyItemBtn.contains(e.target)) return;
                 if (selected.has(i)) {
                     selected.delete(i);
                     item.classList.remove('selected');
