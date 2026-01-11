@@ -20,7 +20,7 @@
 // @description:ru      Скачивайте видео, изображения и GIF с X.com. Копирование в буфер обмена. GIF сохраняются в реальном формате .gif.
 
 // @namespace    https://github.com/DomeenoH/x-media-saver
-// @version      1.2.2
+// @version      1.3.0
 // @author       DomeenoH
 // @license      MIT
 // @homepageURL  https://github.com/DomeenoH/x-media-saver
@@ -35,6 +35,7 @@
 // @grant        GM_getResourceText
 // @connect      video.twimg.com
 // @connect      pbs.twimg.com
+// @connect      cdn.syndication.twimg.com
 // @connect      cdn.jsdelivr.net
 // @resource     GIFWORKER https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.worker.js
 // @require      https://cdn.jsdelivr.net/npm/gif.js@0.2.0/dist/gif.js
@@ -254,6 +255,89 @@
         });
     }
 
+    // 从article中获取推文ID
+    function getTweetIdFromArticle(article) {
+        const link = article.querySelector('a[href*="/status/"]');
+        if (link) {
+            const match = link.href.match(/status\/(\d+)/);
+            if (match) return match[1];
+        }
+        // 尝试从当前URL获取
+        const urlMatch = window.location.href.match(/status\/(\d+)/);
+        return urlMatch ? urlMatch[1] : null;
+    }
+
+    // 尝试从页面中提取视频信息（通过拦截的数据或DOM）
+    async function fetchVideoUrlFromTweet(article, media) {
+        // 方法1: 如果有直接URL，直接返回
+        if (!media.isBlobUrl && media.url && !media.url.startsWith('blob:')) {
+            return media.url;
+        }
+
+        // 方法2: 尝试从页面中的React数据获取
+        try {
+            const tweetId = getTweetIdFromArticle(article);
+            if (!tweetId) {
+                throw new Error('无法获取推文ID');
+            }
+
+            // 尝试从syndication API获取视频信息（公开API）
+            const apiUrl = `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`;
+
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: apiUrl,
+                    responseType: 'json',
+                    onload: (res) => {
+                        try {
+                            const data = typeof res.response === 'string' ? JSON.parse(res.response) : res.response;
+
+                            // 查找视频URL
+                            let videoUrl = null;
+
+                            // 检查 video 字段
+                            if (data.video?.variants) {
+                                const mp4Variants = data.video.variants
+                                    .filter(v => v.type === 'video/mp4' || v.content_type === 'video/mp4')
+                                    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+                                if (mp4Variants.length > 0) {
+                                    videoUrl = mp4Variants[0].src || mp4Variants[0].url;
+                                }
+                            }
+
+                            // 检查 mediaDetails 字段
+                            if (!videoUrl && data.mediaDetails) {
+                                for (const m of data.mediaDetails) {
+                                    if (m.video_info?.variants) {
+                                        const mp4Variants = m.video_info.variants
+                                            .filter(v => v.content_type === 'video/mp4')
+                                            .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+                                        if (mp4Variants.length > 0) {
+                                            videoUrl = mp4Variants[0].url;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (videoUrl) {
+                                resolve(videoUrl);
+                            } else {
+                                reject(new Error('未找到视频URL'));
+                            }
+                        } catch (e) {
+                            reject(new Error('解析视频信息失败'));
+                        }
+                    },
+                    onerror: () => reject(new Error('获取视频信息失败'))
+                });
+            });
+        } catch (e) {
+            throw new Error('获取视频URL失败: ' + e.message);
+        }
+    }
+
     async function copyImageToClipboard(blob) {
         try {
             const item = new ClipboardItem({ [blob.type]: blob });
@@ -373,16 +457,38 @@
         });
     }
 
+    // 从poster URL中提取视频ID
+    function extractVideoIdFromPoster(posterUrl) {
+        // poster格式: https://pbs.twimg.com/amplify_video_thumb/1978080942620028929/img/xxx.jpg
+        // 或: https://pbs.twimg.com/ext_tw_video_thumb/xxx/xxx/img/xxx.jpg
+        const match = posterUrl.match(/(?:amplify_video_thumb|ext_tw_video_thumb)\/(\d+)/);
+        return match ? match[1] : null;
+    }
+
     function detectMediaType(article) {
         const videoEl = article.querySelector('video');
         if (videoEl) {
-            const src = videoEl.src || videoEl.querySelector('source')?.src || '';
-            if (!src) return null; // 无效视频源
-            if (src.includes('tweet_video')) {
+            let src = videoEl.src || videoEl.querySelector('source')?.src || '';
+            const poster = videoEl.poster || '';
+
+            // 对于blob URL或空src，标记为需要特殊处理的视频
+            const isBlobUrl = src.startsWith('blob:') || !src;
+
+            if (src.includes('tweet_video') && !isBlobUrl) {
                 return { type: 'gif', url: src, urls: [src], videoEl };
             }
-            // 保存视频元素引用，用于延迟获取时长
-            return { type: 'video', url: src, urls: [src], videoEl };
+
+            // 保存视频元素引用和poster信息,用于后续获取真实URL
+            const videoId = extractVideoIdFromPoster(poster);
+            return {
+                type: 'video',
+                url: src,
+                urls: [src],
+                videoEl,
+                poster,
+                videoId,
+                isBlobUrl
+            };
         }
 
         const imgEls = article.querySelectorAll('img[src*="pbs.twimg.com/media"]');
@@ -548,13 +654,24 @@
             try {
                 if (media.type === 'gif') {
                     downloadBtn.innerHTML = '⏳';
-                    const gifBlob = await convertMp4ToGif(media.url, (p) => {
+                    // GIF需要获取真实URL
+                    let videoUrl = media.url;
+                    if (media.isBlobUrl) {
+                        downloadBtn.innerHTML = '🔍';
+                        videoUrl = await fetchVideoUrlFromTweet(article, media);
+                    }
+                    const gifBlob = await convertMp4ToGif(videoUrl, (p) => {
                         downloadBtn.innerHTML = `${p}%`;
                     });
-                    downloadBlob(gifBlob, buildFilename(article, mediaId, 'gif'));
+                    downloadBlob(gifBlob, buildFilename(article, mediaId || media.videoId || 'video', 'gif'));
                 } else if (media.type === 'video') {
-                    const blob = await fetchBlob(media.url);
-                    downloadBlob(blob, buildFilename(article, mediaId, 'mp4'));
+                    downloadBtn.innerHTML = '🔍';
+                    // 获取真实视频URL
+                    const videoUrl = await fetchVideoUrlFromTweet(article, media);
+                    downloadBtn.innerHTML = '⏳';
+                    const blob = await fetchBlob(videoUrl);
+                    const id = mediaId || media.videoId || getMediaIdFromUrl(videoUrl) || 'video';
+                    downloadBlob(blob, buildFilename(article, id, 'mp4'));
                 } else {
                     await downloadImages(media.urls);
                 }
@@ -591,13 +708,17 @@
                 }
 
                 saveAsGifBtn.disabled = true;
-                saveAsGifBtn.innerHTML = '⏳';
+                saveAsGifBtn.innerHTML = '🔍';
 
                 try {
-                    const gifBlob = await convertMp4ToGif(media.url, (p) => {
+                    // 获取真实视频URL
+                    const videoUrl = await fetchVideoUrlFromTweet(article, media);
+                    saveAsGifBtn.innerHTML = '⏳';
+                    const gifBlob = await convertMp4ToGif(videoUrl, (p) => {
                         saveAsGifBtn.innerHTML = `${p}%`;
                     });
-                    downloadBlob(gifBlob, buildFilename(article, mediaId, 'gif'));
+                    const id = mediaId || media.videoId || getMediaIdFromUrl(videoUrl) || 'video';
+                    downloadBlob(gifBlob, buildFilename(article, id, 'gif'));
                 } catch (err) {
                     showToast('转换失败: ' + err.message);
                 }
@@ -614,8 +735,11 @@
 
             try {
                 if (media.type === 'gif') {
+                    copyBtn.innerHTML = '🔍';
+                    // 获取真实视频URL
+                    const videoUrl = await fetchVideoUrlFromTweet(article, media);
                     copyBtn.innerHTML = '⏳';
-                    const gifBlob = await convertMp4ToGif(media.url, (p) => {
+                    const gifBlob = await convertMp4ToGif(videoUrl, (p) => {
                         copyBtn.innerHTML = `${p}%`;
                     });
                     showGifModal(gifBlob);
@@ -627,96 +751,100 @@
                     } else if (duration === 0) {
                         showToast('视频未加载完成，请稍后再试');
                     } else {
+                        copyBtn.innerHTML = '🔍';
+                        // 获取真实视频URL
+                        const videoUrl = await fetchVideoUrlFromTweet(article, media);
                         copyBtn.innerHTML = '⏳';
-                        const gifBlob = await convertMp4ToGif(media.url, (p) => {
+                        const gifBlob = await convertMp4ToGif(videoUrl, (p) => {
                             copyBtn.innerHTML = `${p}%`;
                         });
                         showGifModal(gifBlob);
                     }
-                } else if (media.type === 'image') {
-                    const blob = await fetchBlob(media.url);
-                    const pngBlob = await convertToPng(blob);
-                    await copyImageToClipboard(pngBlob);
                 }
-            } catch (err) {
-                showToast('复制失败: ' + err.message);
+            } else if (media.type === 'image') {
+                const blob = await fetchBlob(media.url);
+                const pngBlob = await convertToPng(blob);
+                await copyImageToClipboard(pngBlob);
             }
+        } catch (err) {
+            showToast('复制失败: ' + err.message);
+        }
 
-            copyBtn.disabled = false;
-            copyBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
-        };
+        copyBtn.disabled = false;
+        copyBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
+    };
 
-        const actionBar = article.querySelector('[role="group"]');
-        if (actionBar) {
-            actionBar.appendChild(downloadBtn);
-            if (saveAsGifBtn) {
-                actionBar.appendChild(saveAsGifBtn);
-            }
-            if (selectBtn) {
-                actionBar.appendChild(selectBtn);
-            }
-            // 显示复制按钮：GIF、图片、视频（视频时长在点击时检查）
-            if (media.type === 'gif' || media.type === 'image' || media.type === 'video') {
-                actionBar.appendChild(copyBtn);
-            }
+    const actionBar = article.querySelector('[role="group"]');
+    if (actionBar) {
+        actionBar.appendChild(downloadBtn);
+        if (saveAsGifBtn) {
+            actionBar.appendChild(saveAsGifBtn);
+        }
+        if (selectBtn) {
+            actionBar.appendChild(selectBtn);
+        }
+        // 显示复制按钮：GIF、图片、视频（视频时长在点击时检查）
+        if (media.type === 'gif' || media.type === 'image' || media.type === 'video') {
+            actionBar.appendChild(copyBtn);
         }
     }
+}
 
     async function convertToPng(blob) {
-        const img = new Image();
-        img.src = URL.createObjectURL(blob);
-        await new Promise(r => img.onload = r);
+    const img = new Image();
+    img.src = URL.createObjectURL(blob);
+    await new Promise(r => img.onload = r);
 
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
 
-        URL.revokeObjectURL(img.src);
+    URL.revokeObjectURL(img.src);
 
-        return new Promise(r => canvas.toBlob(r, 'image/png'));
-    }
+    return new Promise(r => canvas.toBlob(r, 'image/png'));
+}
 
-    async function extractFirstFrameAsPng(videoUrl) {
-        const video = document.createElement('video');
-        video.crossOrigin = 'anonymous';
-        video.muted = true;
+async function extractFirstFrameAsPng(videoUrl) {
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
 
-        const blob = await fetchBlob(videoUrl);
-        video.src = URL.createObjectURL(blob);
+    const blob = await fetchBlob(videoUrl);
+    video.src = URL.createObjectURL(blob);
 
-        await new Promise(r => video.onloadedmetadata = r);
-        video.currentTime = 0;
-        await new Promise(r => video.onseeked = r);
+    await new Promise(r => video.onloadedmetadata = r);
+    video.currentTime = 0;
+    await new Promise(r => video.onseeked = r);
 
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0);
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0);
 
-        URL.revokeObjectURL(video.src);
+    URL.revokeObjectURL(video.src);
 
-        return new Promise(r => canvas.toBlob(r, 'image/png'));
-    }
+    return new Promise(r => canvas.toBlob(r, 'image/png'));
+}
 
-    function scanAndAddButtons() {
-        const articles = document.querySelectorAll('article');
-        articles.forEach(article => {
-            const media = detectMediaType(article);
-            if (media) {
-                createButtons(article, media);
-            }
-        });
-    }
-
-    const observer = new MutationObserver(() => {
-        scanAndAddButtons();
+function scanAndAddButtons() {
+    const articles = document.querySelectorAll('article');
+    articles.forEach(article => {
+        const media = detectMediaType(article);
+        if (media) {
+            createButtons(article, media);
+        }
     });
+}
 
-    observer.observe(document.body, { childList: true, subtree: true });
+const observer = new MutationObserver(() => {
     scanAndAddButtons();
+});
 
-})();
+observer.observe(document.body, { childList: true, subtree: true });
+scanAndAddButtons();
+
+}) ();
 
