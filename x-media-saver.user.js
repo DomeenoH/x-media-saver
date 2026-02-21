@@ -49,6 +49,107 @@
     const workerBlob = new Blob([workerScript], { type: 'application/javascript' });
     const workerUrl = URL.createObjectURL(workerBlob);
 
+    // 全局视频URL缓存: tweetId -> { videoUrl, type('video'|'gif') }
+    const videoUrlCache = new Map();
+
+    // 从 Twitter GraphQL API 响应中递归提取视频信息
+    function extractVideoInfoFromApiData(data) {
+        if (!data || typeof data !== 'object') return;
+
+        // 处理数组
+        if (Array.isArray(data)) {
+            data.forEach(item => extractVideoInfoFromApiData(item));
+            return;
+        }
+
+        // 查找 tweet result 结构
+        const legacy = data.legacy;
+        const restId = data.rest_id;
+
+        if (legacy && restId) {
+            const mediaEntities = legacy.extended_entities?.media || legacy.entities?.media || [];
+            for (const m of mediaEntities) {
+                if (m.video_info?.variants) {
+                    const mp4Variants = m.video_info.variants
+                        .filter(v => v.content_type === 'video/mp4')
+                        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+                    if (mp4Variants.length > 0) {
+                        const isGif = m.type === 'animated_gif';
+                        videoUrlCache.set(restId, {
+                            videoUrl: mp4Variants[0].url,
+                            type: isGif ? 'gif' : 'video'
+                        });
+                    }
+                }
+            }
+        }
+
+        // 递归遍历所有值
+        for (const key of Object.keys(data)) {
+            if (typeof data[key] === 'object' && data[key] !== null) {
+                extractVideoInfoFromApiData(data[key]);
+            }
+        }
+    }
+
+    // 判断URL是否为 Twitter GraphQL API 端点
+    function isTwitterGraphqlApi(url) {
+        return url && (
+            url.includes('/graphql/') ||
+            url.includes('/i/api/') ||
+            url.includes('api.twitter.com') ||
+            url.includes('api.x.com')
+        );
+    }
+
+    // 安全解析并提取视频数据
+    function tryExtractFromResponse(text) {
+        try {
+            const json = JSON.parse(text);
+            extractVideoInfoFromApiData(json);
+        } catch (e) {
+            // 非JSON响应，忽略
+        }
+    }
+
+    // 拦截 XMLHttpRequest 以捕获 Twitter API 响应
+    const origXhrOpen = XMLHttpRequest.prototype.open;
+    const origXhrSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function (method, url, ...args) {
+        this._xmdUrl = url;
+        return origXhrOpen.call(this, method, url, ...args);
+    };
+
+    XMLHttpRequest.prototype.send = function (...args) {
+        if (isTwitterGraphqlApi(this._xmdUrl)) {
+            this.addEventListener('load', function () {
+                try {
+                    tryExtractFromResponse(this.responseText);
+                } catch (e) { /* 忽略 */ }
+            });
+        }
+        return origXhrSend.apply(this, args);
+    };
+
+    // 拦截 fetch 以捕获 Twitter API 响应
+    const origFetch = window.fetch;
+    window.fetch = function (input, init) {
+        const url = typeof input === 'string' ? input : (input?.url || '');
+        const promise = origFetch.apply(this, arguments);
+
+        if (isTwitterGraphqlApi(url)) {
+            promise.then(response => {
+                // clone 以避免消耗原始响应体
+                response.clone().text().then(text => {
+                    tryExtractFromResponse(text);
+                }).catch(() => { });
+            }).catch(() => { });
+        }
+
+        return promise;
+    };
+
     GM_addStyle(`
         .xmd-action-btn {
             display: flex;
@@ -269,22 +370,32 @@
 
     // 尝试从页面中提取视频信息（通过拦截的数据或DOM）
     async function fetchVideoUrlFromTweet(article, media) {
-        // 方法1: 如果有直接URL，直接返回
+        // 方法1: 如果有直接URL（非blob），直接返回
         if (!media.isBlobUrl && media.url && !media.url.startsWith('blob:')) {
             return media.url;
         }
 
-        // 方法2: 尝试从页面中的React数据获取
-        try {
-            const tweetId = getTweetIdFromArticle(article);
-            if (!tweetId) {
-                throw new Error('无法获取推文ID');
-            }
+        const tweetId = getTweetIdFromArticle(article);
+        if (!tweetId) {
+            throw new Error('无法获取推文ID');
+        }
 
-            // 尝试从syndication API获取视频信息（公开API）
+        // 方法2: 从拦截缓存中查找（优先，适用于敏感/受限推文）
+        if (videoUrlCache.has(tweetId)) {
+            return videoUrlCache.get(tweetId).videoUrl;
+        }
+
+        // 方法3: 等待一小段时间后再次检查缓存（API响应可能有延迟）
+        await new Promise(r => setTimeout(r, 500));
+        if (videoUrlCache.has(tweetId)) {
+            return videoUrlCache.get(tweetId).videoUrl;
+        }
+
+        // 方法4: 尝试从 syndication API 获取（公开API，对敏感内容可能失败）
+        try {
             const apiUrl = `https://cdn.syndication.twimg.com/tweet-result?id=${tweetId}&token=0`;
 
-            return new Promise((resolve, reject) => {
+            const videoUrl = await new Promise((resolve, reject) => {
                 GM_xmlhttpRequest({
                     method: 'GET',
                     url: apiUrl,
@@ -293,7 +404,12 @@
                         try {
                             const data = typeof res.response === 'string' ? JSON.parse(res.response) : res.response;
 
-                            // 查找视频URL
+                            // 如果返回了 TweetTombstone，直接跳过
+                            if (data.__typename === 'TweetTombstone' || data.tombstone) {
+                                reject(new Error('推文不可通过公开API访问'));
+                                return;
+                            }
+
                             let videoUrl = null;
 
                             // 检查 video 字段
@@ -333,8 +449,13 @@
                     onerror: () => reject(new Error('获取视频信息失败'))
                 });
             });
+            return videoUrl;
         } catch (e) {
-            throw new Error('获取视频URL失败: ' + e.message);
+            // syndication API 失败，最后再检查一次缓存
+            if (videoUrlCache.has(tweetId)) {
+                return videoUrlCache.get(tweetId).videoUrl;
+            }
+            throw new Error('获取视频URL失败: ' + e.message + '（提示：尝试刷新页面后重试）');
         }
     }
 
@@ -474,6 +595,15 @@
             // 对于blob URL或空src，标记为需要特殊处理的视频
             const isBlobUrl = src.startsWith('blob:') || !src;
 
+            // 先检查缓存中是否标记为 gif 类型
+            const tweetId = getTweetIdFromArticle(article);
+            if (tweetId && videoUrlCache.has(tweetId)) {
+                const cached = videoUrlCache.get(tweetId);
+                if (cached.type === 'gif') {
+                    return { type: 'gif', url: cached.videoUrl, urls: [cached.videoUrl], videoEl, isBlobUrl: false };
+                }
+            }
+
             if (src.includes('tweet_video') && !isBlobUrl) {
                 return { type: 'gif', url: src, urls: [src], videoEl };
             }
@@ -488,6 +618,33 @@
                 poster,
                 videoId,
                 isBlobUrl
+            };
+        }
+
+        // 后备：检查是否有视频播放器容器（video元素可能尚未渲染，如敏感内容遮罩下）
+        const videoPlayer = article.querySelector('[data-testid="videoPlayer"]');
+        if (videoPlayer) {
+            const tweetId = getTweetIdFromArticle(article);
+            // 尝试从 videoPlayer 内部找到 poster 图片
+            const posterImg = videoPlayer.querySelector('img[src*="pbs.twimg.com"]');
+            const poster = posterImg ? posterImg.src : '';
+            const videoId = extractVideoIdFromPoster(poster);
+
+            // 检查缓存判断是否为 GIF
+            if (tweetId && videoUrlCache.has(tweetId)) {
+                const cached = videoUrlCache.get(tweetId);
+                if (cached.type === 'gif') {
+                    return { type: 'gif', url: cached.videoUrl, urls: [cached.videoUrl], isBlobUrl: false };
+                }
+            }
+
+            return {
+                type: 'video',
+                url: '',
+                urls: [''],
+                poster,
+                videoId,
+                isBlobUrl: true
             };
         }
 
